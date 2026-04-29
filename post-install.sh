@@ -15,15 +15,6 @@ err() { printf "\033[1;31m%s\033[0m" "$1"; }
 warn() { printf "\033[1;33m%s\033[0m" "$1"; }
 info() { printf "\033[1;34m%s\033[0m" "$1"; }
 
-ask_confirm() {
-  read -rp "$(warn "$1 [y/N]: ")" proceed
-  if [[ "$proceed" == [yY] ]]; then
-    return 0
-  else
-    return 1
-  fi
-}
-
 if [ "$EUID" -eq 0 ]; then
   echo "$(err 'Do not run this script as root!')" >&2
   exit 1
@@ -139,9 +130,7 @@ if ! grep -qx "$step" "$STATE_FILE"; then
   gsettings set org.gnome.desktop.wm.keybindings close "['<Alt>w']"
   gsettings set org.gnome.shell favorite-apps "['org.gnome.Ptyxis.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Settings.desktop', 'com.mattjakeman.ExtensionManager.desktop', 'org.gnome.Software.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.SystemMonitor.desktop', 'org.mozilla.firefox.desktop', 'steam.desktop']"
   if ! gsettings get org.gnome.desktop.input-sources xkb-options | grep -q "grp:caps_toggle"; then
-    if ask_confirm "Do you want to set keyboard layout change to CapsLock?"; then
-      gsettings set org.gnome.desktop.input-sources xkb-options "['grp:caps_toggle','lv3:ralt_switch']"
-    fi
+    gsettings set org.gnome.desktop.input-sources xkb-options "['grp:caps_toggle','lv3:ralt_switch']"
   fi
   echo "$step" >> "$STATE_FILE"
 fi
@@ -154,15 +143,40 @@ if ! grep -qx "$step" "$STATE_FILE"; then
   echo "$step" >> "$STATE_FILE"
 fi
 
-echo "$(info "[12|13]: Setting up look of your desktop")"
-looks=("macos" "windows" "nothing")
-PS3='(1 - macos, 2 - windows, 3 - do nothing): '
-select SELECTED_LOOK in "${looks[@]}"; do
-  if [[ -n "$SELECTED_LOOK" ]]; then
-    break
-  fi
-done
+ID=$$
+yad --notebook --key=$ID \
+  --title="Fedora Setup" \
+  --button="Start:0" \
+  --tab="Desktop Look" \
+  --tab="Programs" \
+  --width=500 --height=400 &
+NOTEBOOK_PID=$!
 
+SELECTED_LOOK=$(yad --plug=$ID --tabnum=1 --list --radiolist \
+  --column="" --column="Look" \
+  TRUE  "macos" \
+  FALSE "windows" \
+  FALSE "nothing" \
+  --print-column=2)
+
+PROGRAMS=$(yad --plug=$ID --tabnum=2 --list --checklist \
+  --column="Install" --column="ID" --column="Description" \
+  --print-column=2 --separator=" " \
+  FALSE "color-picker"    "Color Picker (GNOME Extension)" \
+  FALSE "rounded-corners" "Rounded Window Corners (GNOME Extension)" \
+  FALSE "hidetopbar"      "Hide Top Bar (GNOME Extension)" \
+  FALSE "vitals"          "Vitals - system monitor (GNOME Extension)" \
+  FALSE "minecraft"       "Minecraft (FREE VERSION)" \
+  FALSE "youtube-music"   "YouTube Music App" \
+  FALSE "vicinae"         "Vicinae - launcher & clipboard manager" \
+  FALSE "obs-hotkeys"     "Fix OBS recording hotkeys")
+
+wait $NOTEBOOK_PID || { echo "$(err "Cancelled.")"; exit 1; }
+
+SELECTED_LOOK=$(echo "$SELECTED_LOOK" | tr -d '|[:space:]')
+selected() { echo "$PROGRAMS" | grep -qw "$1"; }
+
+echo "$(info "[12|13]: Setting up look of your desktop")"
 case "$SELECTED_LOOK" in
   "windows")
     WALLPAPER_NAME="windows.jpg"
@@ -196,29 +210,29 @@ gsettings set org.gnome.desktop.background picture-uri "$WALLPAPER"
 gsettings set org.gnome.desktop.background picture-uri-dark "$WALLPAPER"
 
 echo "$(info "[13|13]: Installing recommended programs")"
-if ask_confirm "enable 'Color Picker' System Extension?"; then
+if selected "color-picker"; then
   $EXT_CLI install color-picker@tuberry
   $EXT_CLI enable color-picker@tuberry
 fi
-if ask_confirm "enable 'Rounded Window Corners' (FOR ALL APPS) System Extension?"; then
+if selected "rounded-corners"; then
   $EXT_CLI install rounded-window-corners@fxgn
   $EXT_CLI enable rounded-window-corners@fxgn
 fi
-if ask_confirm "enable 'Hide Top Bar' System Extension?"; then
+if selected "hidetopbar"; then
   $EXT_CLI install hidetopbar@mathieu.bidon.ca
   $EXT_CLI enable hidetopbar@mathieu.bidon.ca
 fi
-if ask_confirm "enable 'Vitals' System Extension?"; then
+if selected "vitals"; then
   $EXT_CLI install Vitals@CoreCoding.com
   $EXT_CLI enable Vitals@CoreCoding.com
 fi
-if ask_confirm "install Minecraft (FREE VERSION)"; then
+if selected "minecraft"; then
   if ! eval "$MC_INSTALL_CMD"; then
     echo "$(err "Minecraft installation failed. Try later by running this script:")"
     echo "$(info "$MC_INSTALL_CMD")"
   fi
 fi
-if ask_confirm "install YouTube Music App (best client for linux)"; then
+if selected "youtube-music"; then
   if rpm -qa | grep -q youtube-music; then
     echo "$(warn "YouTube Music App is already installed")"
   else
@@ -226,7 +240,7 @@ if ask_confirm "install YouTube Music App (best client for linux)"; then
     sudo dnf install -y "$HOME/Downloads/youtube-music.rpm"
   fi
 fi
-if ask_confirm "install Vicinae (app launcher, clipboard manager and way more)"; then
+if selected "vicinae"; then
   if command -v vicinae &>/dev/null; then
     curl -fsSL https://vicinae.com/install.sh | bash
     echo "$(warn "Vicinae is already installed")"
@@ -252,7 +266,7 @@ if ask_confirm "install Vicinae (app launcher, clipboard manager and way more)";
   fi
 fi
 
-if ask_confirm "Fix OBS recording hotkeys (simple enables the option in system settings to set hotkeys for OBS)"; then
+if selected "obs-hotkeys"; then
   if [ -d "$OBS_HOTKEYS_DIR" ]; then
     echo "$(warn "OBS hotkeys already installed")"
   else
@@ -275,8 +289,11 @@ if ask_confirm "Fix OBS recording hotkeys (simple enables the option in system s
   fi
 fi
 
-echo "$(success "Your Fedora installation is ready to use! Have fun :)")"
-echo "$(success 'You can install any app in default Software App or from browser using ".rpm" ".AppImage" or "snap" files format')"
-if ask_confirm "Your system needs to reboot after all changes to take effect. Do you want to reboot now?"; then
-  systemctl reboot
-fi
+yad --title="Setup Complete!" \
+  --text="🎉 <b>Your Fedora installation is ready to use! Have fun :)</b>\n\nYou can install any app in the default Software App or from browser using <b>.rpm</b>, <b>.AppImage</b> or <b>.snap</b> file formats.\n\n<b>What was done:</b>\n• Package manager optimized\n• System updated\n• RPM Fusion enabled\n• Essential codecs installed\n• Boot time reduced\n• Terminal utilities installed (zsh, oh-my-zsh)\n• Default music app changed\n• Essential programs installed\n• Unnecessary programs removed\n• System settings tweaked\n• GNOME extensions installed\n• Desktop look configured\n• Selected programs installed\n\n⚠️ <b>Your system needs to reboot for all changes to take effect.</b>" \
+  --button="Reboot now:0" \
+  --button="Later:1" \
+  --width=500 --height=400 &
+REBOOT_PID=$!
+
+wait $REBOOT_PID && systemctl reboot
