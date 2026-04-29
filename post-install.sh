@@ -55,21 +55,21 @@ sudo dnf upgrade -y --skip-unavailable && sudo flatpak update || {
 }
 
 step="[3|13]: Enable the RPM Fusion repository (for more packages)"
-if ! grep -qx "$step" "$STATE_FILE"; then
+if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
   sudo dnf install -y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
   echo "$step" >> "$STATE_FILE"
 fi
 
 step="[4|13]: Installing essential codecs"
-if ! grep -qx "$step" "$STATE_FILE"; then
+if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
   sudo dnf install -y x264 obs-studio-plugin-x264 --allowerasing
   echo "$step" >> "$STATE_FILE"
 fi
 
 step="[5|13]: Make the system start faster"
-if ! grep -qx "$step" "$STATE_FILE"; then
+if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
   sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=3/' /etc/default/grub
   sudo grub2-mkconfig -o /boot/grub2/grub.cfg
@@ -77,7 +77,7 @@ if ! grep -qx "$step" "$STATE_FILE"; then
 fi
 
 step="[6|13]: Installing Terminal utilities"
-if ! grep -qx "$step" "$STATE_FILE"; then
+if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
   sudo dnf install -y yad python3-pip zsh
   pip3 install gnome-extensions-cli
@@ -88,12 +88,12 @@ if ! grep -qx "$step" "$STATE_FILE"; then
   if grep -q ' . /etc/bashrc' "$HOME/.bashrc"; then
     sed -i 's| . /etc/bashrc|#. /etc/bashrc|' "$HOME/.bashrc"
   fi
-  chsh -s $(which zsh)
+  [ "$SHELL" != "$(which zsh)" ] && chsh -s "$(which zsh)"
   echo "$step" >> "$STATE_FILE"
 fi
 
 step="[7|13]: Changing default music app"
-if ! grep -qx "$step" "$STATE_FILE"; then
+if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
   sudo flatpak install -y fedora com.github.neithern.g4music
   xdg-mime default com.github.neithern.g4music.desktop audio/mpeg audio/flac audio/x-wav audio/ogg
@@ -101,7 +101,7 @@ if ! grep -qx "$step" "$STATE_FILE"; then
 fi
 
 step="[8|13]: Installing essential programs"
-if ! grep -qx "$step" "$STATE_FILE"; then
+if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
   sudo dnf install -y gnome-tweaks steam
   sudo flatpak install -y flathub com.mattjakeman.ExtensionManager com.usebottles.bottles
@@ -109,14 +109,14 @@ if ! grep -qx "$step" "$STATE_FILE"; then
 fi
 
 step="[9|13]: Removing unnecessary programs"
-if ! grep -qx "$step" "$STATE_FILE"; then
+if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
   sudo dnf remove -y gnome-tour baobab malcontent-control yelp
   echo "$step" >> "$STATE_FILE"
 fi
 
 step="[10|13]: Tweaking system settings a bit"
-if ! grep -qx "$step" "$STATE_FILE"; then
+if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
   powerprofilesctl set performance
   gsettings set org.gnome.desktop.interface enable-hot-corners false
@@ -136,7 +136,7 @@ if ! grep -qx "$step" "$STATE_FILE"; then
 fi
 
 step="[11|13]: Installing essential gnome extensions"
-if ! grep -qx "$step" "$STATE_FILE"; then
+if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
   $EXT_CLI install appindicatorsupport@rgcjonas.gmail.com quick-lang-switch@ankostis.gmail.com blur-my-shell@aunetx just-perfection-desktop@just-perfection Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com
   $EXT_CLI disable background-logo@fedorahosted.org Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com
@@ -144,22 +144,14 @@ if ! grep -qx "$step" "$STATE_FILE"; then
 fi
 
 ID=$$
-yad --notebook --key=$ID \
-  --title="Fedora Setup" \
-  --button="Start:0" \
-  --tab="Desktop Look" \
-  --tab="Programs" \
-  --width=500 --height=400 &
-NOTEBOOK_PID=$!
+YAD_TMP=$(mktemp -d)
 
-SELECTED_LOOK=$(yad --plug=$ID --tabnum=1 --list --radiolist \
+yad --plug=$ID --tabnum=1 --list --radiolist \
   --column="" --column="Look" \
-  TRUE  "macos" \
-  FALSE "windows" \
-  FALSE "nothing" \
-  --print-column=2)
+  TRUE "macos" FALSE "windows" FALSE "nothing" \
+  --print-column=2 > "$YAD_TMP/look" &
 
-PROGRAMS=$(yad --plug=$ID --tabnum=2 --list --checklist \
+yad --plug=$ID --tabnum=2 --list --checklist \
   --column="Install" --column="ID" --column="Description" \
   --print-column=2 --separator=" " \
   FALSE "color-picker"    "Color Picker (GNOME Extension)" \
@@ -169,11 +161,18 @@ PROGRAMS=$(yad --plug=$ID --tabnum=2 --list --checklist \
   FALSE "minecraft"       "Minecraft (FREE VERSION)" \
   FALSE "youtube-music"   "YouTube Music App" \
   FALSE "vicinae"         "Vicinae - launcher & clipboard manager" \
-  FALSE "obs-hotkeys"     "Fix OBS recording hotkeys")
+  FALSE "obs-hotkeys"     "Fix OBS recording hotkeys" > "$YAD_TMP/programs" &
 
-wait $NOTEBOOK_PID || { echo "$(err "Cancelled.")"; exit 1; }
+yad --notebook --key=$ID \
+  --title="Fedora Setup" \
+  --button="Start:0" \
+  --tab="Desktop Look" \
+  --tab="Programs" \
+  --width=500 --height=400 || { echo "$(err "Cancelled.")"; exit 1; }
 
-SELECTED_LOOK=$(echo "$SELECTED_LOOK" | tr -d '|[:space:]')
+SELECTED_LOOK=$(cat "$YAD_TMP/look" | tr -d '|[:space:]')
+PROGRAMS=$(cat "$YAD_TMP/programs")
+rm -rf "$YAD_TMP"
 selected() { echo "$PROGRAMS" | grep -qw "$1"; }
 
 echo "$(info "[12|13]: Setting up look of your desktop")"
