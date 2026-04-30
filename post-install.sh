@@ -7,7 +7,7 @@ DNF_CONF="/etc/dnf/dnf.conf"
 MC_INSTALL_CMD='sh -c "$(curl -fsSL https://raw.githubusercontent.com/z-Eduard005/fedora-mc-installer/main/mc-installer.sh)"'
 AUTOSTART_DIR="$HOME/.config/autostart"
 VICINAE_ENTRY_DIR="/usr/local/share/applications"
-APP_DIR="$HOME/.local/share/z-Eduard005-fedora-post-install"
+SCRIPT_DATA_DIR="$HOME/.local/share/z-Eduard005-fedora-post-install"
 OBS_HOTKEYS_DIR="$HOME/Programs/obs-hotkeys"
 
 success() { printf "\033[1;32m%s\033[0m" "$1"; }
@@ -27,8 +27,8 @@ while true; do
   kill -0 "$$" || exit
 done 2>/dev/null &
 
-mkdir -p "$APP_DIR"
-STATE_FILE="$APP_DIR/state"
+mkdir -p "$SCRIPT_DATA_DIR"
+STATE_FILE="$SCRIPT_DATA_DIR/state"
 if [ ! -f "$STATE_FILE" ]; then
   touch "$STATE_FILE"
 fi
@@ -79,7 +79,7 @@ fi
 step="[6|13]: Installing Terminal utilities"
 if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
-  sudo dnf install -y yad python3-pip zsh
+  sudo dnf install -y python3-pip nodejs zsh
   pip3 install gnome-extensions-cli
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
   if ! grep -q 'source ~/.bashrc' "$HOME/.zshrc"; then
@@ -143,36 +143,32 @@ if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$step" >> "$STATE_FILE"
 fi
 
-ID=$$
-YAD_TMP=$(mktemp -d)
-
-yad --plug=$ID --tabnum=1 --list --radiolist \
+SELECTED_LOOK=$(zenity --list --radiolist \
+  --title="Desktop Look" \
+  --text="Choose the look of your desktop:" \
   --column="" --column="Look" \
-  TRUE "macos" FALSE "windows" FALSE "nothing" \
-  --print-column=2 > "$YAD_TMP/look" &
+  FALSE "macos" FALSE "windows" TRUE "linux" \
+  --width=480 --height=480)
 
-yad --plug=$ID --tabnum=2 --list --checklist \
+[ -z "$SELECTED_LOOK" ] && { echo "$(err "Cancelled")"; exit 1; }
+
+PROGRAMS=$(zenity --list --checklist \
+  --title="Programs to install" \
+  --text="Select programs then click OK:" \
   --column="Install" --column="ID" --column="Description" \
-  --print-column=2 --separator=" " \
+  --separator=" " \
   FALSE "color-picker"    "Color Picker (GNOME Extension)" \
   FALSE "rounded-corners" "Rounded Window Corners (GNOME Extension)" \
   FALSE "hidetopbar"      "Hide Top Bar (GNOME Extension)" \
-  FALSE "vitals"          "Vitals - system monitor (GNOME Extension)" \
+  FALSE "vitals"          "Vitals - system monitor" \
   FALSE "minecraft"       "Minecraft (FREE VERSION)" \
   FALSE "youtube-music"   "YouTube Music App" \
   FALSE "vicinae"         "Vicinae - launcher & clipboard manager" \
-  FALSE "obs-hotkeys"     "Fix OBS recording hotkeys" > "$YAD_TMP/programs" &
+  FALSE "obs-hotkeys"     "Fix OBS recording hotkeys" \
+  --width=960 --height=540)
 
-yad --notebook --key=$ID \
-  --title="Fedora Setup" \
-  --button="Start:0" \
-  --tab="Desktop Look" \
-  --tab="Programs" \
-  --width=500 --height=400 || { echo "$(err "Cancelled.")"; exit 1; }
+[ $? -ne 0 ] && { echo "$(err "Cancelled")"; exit 1; }
 
-SELECTED_LOOK=$(cat "$YAD_TMP/look" | tr -d '|[:space:]')
-PROGRAMS=$(cat "$YAD_TMP/programs")
-rm -rf "$YAD_TMP"
 selected() { echo "$PROGRAMS" | grep -qw "$1"; }
 
 echo "$(info "[12|13]: Setting up look of your desktop")"
@@ -192,7 +188,7 @@ case "$SELECTED_LOOK" in
     $EXT_CLI disable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
     ;;
-  *)
+  "linux")
     WALLPAPER_NAME="linux.jpg"
     $EXT_CLI disable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-light'
@@ -250,18 +246,24 @@ if selected "vicinae"; then
     cp "$VICINAE_ENTRY_DIR/vicinae.desktop" "$AUTOSTART_DIR"
 
     existing=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
-    new=$(echo "$existing" | sed "s|]|, '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-toggle/', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-clipboard/']|")
+    new=$(echo "$existing" | sed "s|]|, '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-toggle/', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-clipboard/', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-restart/']|")
     gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$new"
 
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-toggle/ name 'Vicinae Toggle'
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-toggle/ command 'vicinae toggle'
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-toggle/ binding '<Alt>space'
+
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-clipboard/ name 'Vicinae Clipboard'
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-clipboard/ command 'vicinae deeplink vicinae://launch/clipboard/history'
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-clipboard/ binding '<Alt>v'
 
+    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-restart/ name 'Vicinae Restart'
+    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-restart/ command 'systemctl --user restart vicinae.service'
+    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-restart/ binding '<Control><Alt>space'
+
     echo "$(success "Vicinae installed. To use it, just press <Alt+Space>")"
-    echo "$(success "And for using clipboard manager press <Alt+V>")"
+    echo "$(success "For clipboard manager press <Alt+V>")"
+    echo "$(success "<Ctrl+Alt+Space> to restart vicinae service")"
   fi
 fi
 
@@ -280,6 +282,7 @@ if selected "obs-hotkeys"; then
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-pause/ name 'OBS Toggle Pause'
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-pause/ command "node $OBS_HOTKEYS_DIR/toggle-pause.js"
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-pause/ binding '<Control><Alt>BackSpace'
+
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-record/ name 'OBS Toggle Record'
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-record/ command "node $OBS_HOTKEYS_DIR/toggle-record.js"
     gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-record/ binding '<Control><Shift><Alt>BackSpace'
@@ -288,11 +291,14 @@ if selected "obs-hotkeys"; then
   fi
 fi
 
-yad --title="Setup Complete!" \
-  --text="🎉 <b>Your Fedora installation is ready to use! Have fun :)</b>\n\nYou can install any app in the default Software App or from browser using <b>.rpm</b>, <b>.AppImage</b> or <b>.snap</b> file formats.\n\n<b>What was done:</b>\n• Package manager optimized\n• System updated\n• RPM Fusion enabled\n• Essential codecs installed\n• Boot time reduced\n• Terminal utilities installed (zsh, oh-my-zsh)\n• Default music app changed\n• Essential programs installed\n• Unnecessary programs removed\n• System settings tweaked\n• GNOME extensions installed\n• Desktop look configured\n• Selected programs installed\n\n⚠️ <b>Your system needs to reboot for all changes to take effect.</b>" \
-  --button="Reboot now:0" \
-  --button="Later:1" \
-  --width=500 --height=400 &
-REBOOT_PID=$!
+zenity --info \
+  --title="Setup Complete!" \
+  --text="🎉 Your Fedora installation is ready to use! Have fun :)\n\nYou can install any app in the default Software App or from browser using .rpm, .AppImage or .snap file formats.\n\nWhat was done:\n• Package manager optimized\n• System updated\n• RPM Fusion enabled\n• Essential codecs installed\n• Boot time reduced\n• Terminal utilities installed (zsh, oh-my-zsh)\n• Default music app changed\n• Essential programs installed\n• Unnecessary programs removed\n• System settings tweaked\n• GNOME extensions installed\n• Desktop look configured\n• Selected programs installed\n\n⚠️ Your system needs to reboot for all changes to take effect." \
+  --width=960 --height=540
 
-wait $REBOOT_PID && systemctl reboot
+zenity --question \
+  --title="Reboot" \
+  --text="Do you want to reboot now?" \
+  --ok-label="Reboot now" \
+  --cancel-label="Later" \
+  --width=480 --height=480 && systemctl reboot
