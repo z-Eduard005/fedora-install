@@ -1,22 +1,35 @@
 #!/bin/bash
+RAW_GITHUB="https://raw.githubusercontent.com/z-Eduard005/fedora-install/main"
+MC_INSTALLER='sh -c "$(curl -fsSL https://raw.githubusercontent.com/z-Eduard005/fedora-mc-installer/main/mc-installer.sh)"'
+OBS_HOTKEYS_INSTALLER='sh -c "$(curl -fsSL https://raw.githubusercontent.com/z-Eduard005/gnome-obs-hotkeys/main/install.sh)"'
+VICINAE_INSTALLER='sh -c "$(curl -fsSL https://raw.githubusercontent.com/z-Eduard005/gnome-vicinae-installer/main/install.sh)"'
+OMZ_INSTALLER='sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended'
+YTM_DOWNLOAD_URL="https://api.github.com/repos/pear-devs/pear-desktop/releases/latest"
+RPM_FUSION_CMD="https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
 EXT_CLI="$HOME/.local/bin/gnome-extensions-cli"
 WALLPAPERS_DIR="$HOME/.local/share/backgrounds"
-RAW_GITHUB="https://raw.githubusercontent.com/z-Eduard005/fedora-install/main"
 WALLPAPERS_URL="$RAW_GITHUB/wallpapers"
 DNF_CONF="/etc/dnf/dnf.conf"
-MC_INSTALL_CMD='sh -c "$(curl -fsSL https://raw.githubusercontent.com/z-Eduard005/fedora-mc-installer/main/mc-installer.sh)"'
-AUTOSTART_DIR="$HOME/.config/autostart"
-VICINAE_ENTRY_DIR="/usr/local/share/applications"
 SCRIPT_DATA_DIR="$HOME/.local/share/z-Eduard005-fedora-post-install"
-OBS_HOTKEYS_DIR="$HOME/Programs/obs-hotkeys"
+LIBREOFFICE_USER_DIR="$HOME/.config/libreoffice/4/user"
 
 success() { printf "\033[1;32m%s\033[0m" "$1"; }
 err() { printf "\033[1;31m%s\033[0m" "$1"; }
 warn() { printf "\033[1;33m%s\033[0m" "$1"; }
 info() { printf "\033[1;34m%s\033[0m" "$1"; }
 
+set_dnf_conf_option() {
+  local key="$1"
+  local value="$2"
+  if grep -q "^${key}=" "$DNF_CONF"; then
+    sudo sed -i "s|^${key}=.*|${key}=${value}|" "$DNF_CONF"
+  else
+    echo "${key}=${value}" | sudo tee -a "$DNF_CONF" >/dev/null
+  fi
+}
+
 if [ "$EUID" -eq 0 ]; then
-  echo "$(err 'Do not run this script as root!')" >&2
+  echo "$(err 'Do not run this script with "sudo"!')" >&2
   exit 1
 fi
 
@@ -33,17 +46,11 @@ if [ ! -f "$STATE_FILE" ]; then
   touch "$STATE_FILE"
 fi
 
-step="[1|13]: Make the package manager faster"
+step="[1|13]: Configuring system package manager"
 echo "$(info "$step")"
-if ! grep -qxF 'max_parallel_downloads=20' "$DNF_CONF"; then
-  echo 'max_parallel_downloads=20' | sudo tee -a "$DNF_CONF" >/dev/null
-fi
-if ! grep -qxF 'fastestmirror=True' "$DNF_CONF"; then
-  echo 'fastestmirror=True' | sudo tee -a "$DNF_CONF" >/dev/null
-fi
-if ! grep -qxF 'installonly_limit=2' "$DNF_CONF"; then
-  echo 'installonly_limit=2' | sudo tee -a "$DNF_CONF" >/dev/null
-fi
+set_dnf_conf_option "max_parallel_downloads" "15"
+set_dnf_conf_option "fastestmirror" "True"
+set_dnf_conf_option "installonly_limit" "2"
 
 step="[2|13]: Updating the system"
 echo "$(info "$step")"
@@ -53,11 +60,12 @@ sudo dnf upgrade -y --skip-unavailable && sudo flatpak update || {
   sudo all_proxy="socks5://127.0.0.1:9050" dnf upgrade --refresh -y --skip-unavailable
   sudo all_proxy="socks5://127.0.0.1:9050" flatpak update
 }
+fwupdmgr refresh >/dev/null 2>&1 && fwupdmgr update >/dev/null 2>&1
 
 step="[3|13]: Enable the RPM Fusion repository (for more packages)"
 if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
-  sudo dnf install -y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+  sudo dnf install -y "$RPM_FUSION_CMD"
   echo "$step" >> "$STATE_FILE"
 fi
 
@@ -79,9 +87,9 @@ fi
 step="[6|13]: Installing Terminal utilities"
 if ! grep -qxF "$step" "$STATE_FILE"; then
   echo "$(info "$step")"
-  sudo dnf install -y python3-pip nodejs zsh
+  sudo dnf install -y python3-pip zsh
   pip3 install gnome-extensions-cli
-  sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+  eval "$OMZ_INSTALLER"
   if ! grep -q 'source ~/.bashrc' "$HOME/.zshrc"; then
     echo -e "\n# Source the .bashrc config\n[ -f ~/.bashrc ] && source ~/.bashrc" >> "$HOME/.zshrc"
   fi
@@ -132,6 +140,18 @@ if ! grep -qxF "$step" "$STATE_FILE"; then
   if ! gsettings get org.gnome.desktop.input-sources xkb-options | grep -q "grp:caps_toggle"; then
     gsettings set org.gnome.desktop.input-sources xkb-options "['grp:caps_toggle','lv3:ralt_switch']"
   fi
+
+  mkdir -p "$LIBREOFFICE_USER_DIR"
+  cat > "$LIBREOFFICE_USER_DIR/registrymodifications.xcu" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.UI.ToolbarMode/Applications/org.openoffice.Office.UI.ToolbarMode:Application['Writer']"><prop oor:name="Active" oor:op="fuse"><value>notebookbar.ui</value></prop></item>
+<item oor:path="/org.openoffice.Office.UI.ToolbarMode/Applications/org.openoffice.Office.UI.ToolbarMode:Application['Calc']"><prop oor:name="Active" oor:op="fuse"><value>notebookbar.ui</value></prop></item>
+<item oor:path="/org.openoffice.Office.UI.ToolbarMode/Applications/org.openoffice.Office.UI.ToolbarMode:Application['Impress']"><prop oor:name="Active" oor:op="fuse"><value>notebookbar.ui</value></prop></item>
+<item oor:path="/org.openoffice.Office.UI.ToolbarMode/Applications/org.openoffice.Office.UI.ToolbarMode:Application['Draw']"><prop oor:name="Active" oor:op="fuse"><value>notebookbar.ui</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Misc"><prop oor:name="SymbolStyle" oor:op="fuse"><value>sukapura_svg</value></prop></item>
+</oor:items>
+EOF
   echo "$step" >> "$STATE_FILE"
 fi
 
@@ -221,74 +241,29 @@ if selected "vitals"; then
   $EXT_CLI install Vitals@CoreCoding.com
   $EXT_CLI enable Vitals@CoreCoding.com
 fi
+
 if selected "minecraft"; then
-  if ! eval "$MC_INSTALL_CMD"; then
+  if ! eval "$MC_INSTALLER"; then
     echo "$(err "Minecraft installation failed. Try later by running this script:")"
-    echo "$(info "$MC_INSTALL_CMD")"
+    echo "$(info "$MC_INSTALLER")"
   fi
 fi
+
 if selected "youtube-music"; then
   if rpm -qa | grep -q youtube-music; then
     echo "$(warn "YouTube Music App is already installed")"
   else
-    curl -s https://api.github.com/repos/pear-devs/pear-desktop/releases/latest | grep browser_download_url | grep x86_64.rpm | cut -d '"' -f 4 | xargs curl -L -o "$HOME/Downloads/youtube-music.rpm"
+    curl -s "$YTM_DOWNLOAD_URL" | grep browser_download_url | grep x86_64.rpm | cut -d '"' -f 4 | xargs curl -L -o "$HOME/Downloads/youtube-music.rpm"
     sudo dnf install -y "$HOME/Downloads/youtube-music.rpm"
   fi
 fi
+
 if selected "vicinae"; then
-  if command -v vicinae &>/dev/null; then
-    curl -fsSL https://vicinae.com/install.sh | bash
-    echo "$(warn "Vicinae is already installed")"
-  else
-    $EXT_CLI install vicinae@dagimg-dot
-    curl -fsSL https://vicinae.com/install.sh | bash && systemctl --user enable vicinae --now
-    mkdir -p "$AUTOSTART_DIR"
-    cp "$VICINAE_ENTRY_DIR/vicinae.desktop" "$AUTOSTART_DIR"
-
-    existing=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
-    new=$(echo "$existing" | sed "s|]|, '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-toggle/', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-clipboard/', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-restart/']|")
-    gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$new"
-
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-toggle/ name 'Vicinae Toggle'
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-toggle/ command 'vicinae toggle'
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-toggle/ binding '<Alt>space'
-
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-clipboard/ name 'Vicinae Clipboard'
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-clipboard/ command 'vicinae deeplink vicinae://launch/clipboard/history'
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-clipboard/ binding '<Alt>v'
-
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-restart/ name 'Vicinae Restart'
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-restart/ command 'systemctl --user restart vicinae.service'
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/vicinae-restart/ binding '<Control><Alt>space'
-
-    echo "$(success "Vicinae installed. To use it, just press <Alt+Space>")"
-    echo "$(success "For clipboard manager press <Alt+V>")"
-    echo "$(success "<Ctrl+Alt+Space> to restart vicinae service")"
-  fi
+  eval "$VICINAE_INSTALLER"
 fi
 
 if selected "obs-hotkeys"; then
-  if [ -d "$OBS_HOTKEYS_DIR" ]; then
-    echo "$(warn "OBS hotkeys already installed")"
-  else
-    mkdir -p "$OBS_HOTKEYS_DIR"
-    for f in package.json toggle-pause.js toggle-record.js; do curl -fsSL "$RAW_GITHUB/obs-hotkeys/$f" -o "$OBS_HOTKEYS_DIR/$f"; done
-    (cd "$OBS_HOTKEYS_DIR" && npm install)
-
-    existing=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
-    new=$(echo "$existing" | sed "s|]|, '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-pause/', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-record/']|")
-    gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$new"
-
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-pause/ name 'OBS Toggle Pause'
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-pause/ command "node $OBS_HOTKEYS_DIR/toggle-pause.js"
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-pause/ binding '<Control><Alt>BackSpace'
-
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-record/ name 'OBS Toggle Record'
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-record/ command "node $OBS_HOTKEYS_DIR/toggle-record.js"
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obs-record/ binding '<Control><Shift><Alt>BackSpace'
-
-    echo "$(success "OBS hotkeys set. <Ctrl+Alt+Backspace> to toogle pause, <Ctrl+Shift+Alt+Backspace> to toggle recording")"
-  fi
+  eval $OBS_HOTKEYS_INSTALLER
 fi
 
 zenity --info \

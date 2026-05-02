@@ -1,6 +1,0 @@
-{
-  "dependencies": {
-    "obs-websocket-js": "^5.0.6",
-    "ws": "^8.18.3"
-  }
-}
