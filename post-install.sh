@@ -23,6 +23,7 @@ success() { printf "\033[1;32m%s\033[0m" "$1"; }
 err() { printf "\033[1;31m%s\033[0m" "$1"; }
 warn() { printf "\033[1;33m%s\033[0m" "$1"; }
 info() { printf "\033[1;34m%s\033[0m" "$1"; }
+throw_err() { echo "$(err "$1")"; exit 1; }
 
 set_dnf_conf_option() {
   local key="$1"
@@ -34,10 +35,23 @@ set_dnf_conf_option() {
   fi
 }
 
-if [ "$EUID" -eq 0 ]; then
-  echo "$(err 'Do not run this script with "sudo"!')" >&2
-  exit 1
-fi
+log_step() {
+  echo "$(info "$step")"
+}
+
+save_step() {
+  echo "$step" >> "$STATE_FILE"
+}
+
+run_the_step() {
+  grep -qxF "$step" "$STATE_FILE" && {
+    echo "$(info "$(echo "$step" | sed 's/]:.*$/]:/') skipped")"
+    return 1
+  }
+  log_step
+}
+
+[ "$EUID" -eq 0 ] && echo "$(err 'Do not run this script with "sudo"!')" >&2; exit 1
 
 sudo -v || exit 1
 while true; do
@@ -48,18 +62,16 @@ done 2>/dev/null &
 
 mkdir -p "$SCRIPT_DATA_DIR"
 STATE_FILE="$SCRIPT_DATA_DIR/state"
-if [ ! -f "$STATE_FILE" ]; then
-  touch "$STATE_FILE"
-fi
+[ ! -f "$STATE_FILE" ] && touch "$STATE_FILE"
 
 step="[1|13]: Configuring system package manager"
-echo "$(info "$step")"
+log_step
 set_dnf_conf_option "max_parallel_downloads" "15"
 set_dnf_conf_option "fastestmirror" "True"
 set_dnf_conf_option "installonly_limit" "2"
 
 step="[2|13]: Updating the system"
-echo "$(info "$step")"
+log_step
 sudo dnf upgrade -y --skip-unavailable && sudo flatpak update || {
   sudo dnf install -y tor
   sudo systemctl start tor
@@ -68,48 +80,38 @@ sudo dnf upgrade -y --skip-unavailable && sudo flatpak update || {
 }
 fwupdmgr refresh >/dev/null 2>&1 && fwupdmgr update >/dev/null 2>&1
 
-step="[3|13]: Enable the RPM Fusion repository (for more packages)"
-if ! grep -qxF "$step" "$STATE_FILE"; then
-  echo "$(info "$step")"
-  sudo dnf install -y "$RPM_FUSION_CMD"
-  echo "$step" >> "$STATE_FILE"
-fi
+step="[3|13]: Enabling the RPM Fusion repository (for more packages)"
+run_the_step && {
+  sudo dnf install -y "$RPM_FUSION_CMD" || throw_err "RPM Fusion enabling error"
+} && save_step
 
 step="[4|13]: Installing essential codecs"
-if ! grep -qxF "$step" "$STATE_FILE"; then
-  echo "$(info "$step")"
+run_the_step && {
   sudo dnf install -y "${CODEC_PKGS[@]}" --allowerasing
-  echo "$step" >> "$STATE_FILE"
-fi
+} && save_step
 
 step="[5|13]: Installing essential programs"
-if ! grep -qxF "$step" "$STATE_FILE"; then
-  echo "$(info "$step")"
+run_the_step && {
   sudo dnf install -y "${DNF_PKGS[@]}"
   sudo flatpak install -y flathub "${FLATHUB_PKGS[@]}"
   sudo flatpak install -y fedora "${FLATPAK_PKGS[@]}"
   pip3 install $(basename $EXT_CLI)
   eval "$OMZ_INSTALLER"
-  echo "$step" >> "$STATE_FILE"
-fi
+} && save_step
 
 step="[6|13]: Removing unnecessary programs"
-if ! grep -qxF "$step" "$STATE_FILE"; then
-  echo "$(info "$step")"
+run_the_step && {
   sudo dnf remove -y "${REMOVE_PKGS[@]}"
-  echo "$step" >> "$STATE_FILE"
-fi
+} && save_step
 
 step="[7|13]: Make the system start faster"
-if ! grep -qxF "$step" "$STATE_FILE"; then
-  echo "$(info "$step")"
+run_the_step && {
   sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=3/' /etc/default/grub
   sudo grub2-mkconfig -o /boot/grub2/grub.cfg
-  echo "$step" >> "$STATE_FILE"
-fi
+} && save_step
 
 step="[8|13]: Tweaking terminal"
-if ! grep -qxF "$step" "$STATE_FILE"; then
+run_the_step && {
   if ! grep -q 'source ~/.bashrc' "$HOME/.zshrc"; then
     echo -e "\n# Source the .bashrc config\n[ -f ~/.bashrc ] && source ~/.bashrc" >> "$HOME/.zshrc"
   fi
@@ -117,19 +119,15 @@ if ! grep -qxF "$step" "$STATE_FILE"; then
     sed -i 's| . /etc/bashrc|#. /etc/bashrc|' "$HOME/.bashrc"
   fi
   [ "$SHELL" != "$(which zsh)" ] && chsh -s "$(which zsh)"
-  echo "$step" >> "$STATE_FILE"
-fi
+} && save_step
 
 step="[9|13]: Changing default music app"
-if ! grep -qxF "$step" "$STATE_FILE"; then
-  echo "$(info "$step")"
+run_the_step && {
   xdg-mime default com.github.neithern.g4music.desktop audio/mpeg audio/flac audio/x-wav audio/ogg
-  echo "$step" >> "$STATE_FILE"
-fi
+} && save_step
 
 step="[10|13]: Tweaking system settings"
-if ! grep -qxF "$step" "$STATE_FILE"; then
-  echo "$(info "$step")"
+run_the_step && {
   powerprofilesctl set performance
   gsettings set org.gnome.desktop.interface enable-hot-corners false
   gsettings set org.gnome.shell.app-switcher current-workspace-only true
@@ -156,16 +154,13 @@ if ! grep -qxF "$step" "$STATE_FILE"; then
 <item oor:path="/org.openoffice.Office.Common/Misc"><prop oor:name="SymbolStyle" oor:op="fuse"><value>sukapura_svg</value></prop></item>
 </oor:items>
 EOF
-  echo "$step" >> "$STATE_FILE"
-fi
+} && save_step
 
 step="[11|13]: Installing essential gnome extensions"
-if ! grep -qxF "$step" "$STATE_FILE"; then
-  echo "$(info "$step")"
+run_the_step && {
   $EXT_CLI install appindicatorsupport@rgcjonas.gmail.com quick-lang-switch@ankostis.gmail.com blur-my-shell@aunetx just-perfection-desktop@just-perfection Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com
   $EXT_CLI disable background-logo@fedorahosted.org Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com
-  echo "$step" >> "$STATE_FILE"
-fi
+} && save_step
 
 SELECTED_LOOK=$(zenity --list --radiolist \
   --title="Desktop Look" \
@@ -174,7 +169,7 @@ SELECTED_LOOK=$(zenity --list --radiolist \
   FALSE "macos" FALSE "windows" TRUE "linux" \
   --width=480 --height=480)
 
-[ -z "$SELECTED_LOOK" ] && { echo "$(err "Cancelled")"; exit 1; }
+[ -z "$SELECTED_LOOK" ] && { throw_err "Cancelled"; }
 
 PROGRAMS=$(zenity --list --checklist \
   --title="Programs to install" \
@@ -191,11 +186,11 @@ PROGRAMS=$(zenity --list --checklist \
   FALSE "obs-hotkeys"     "Fix OBS recording hotkeys (you want this if you will record with obs)" \
   --width=960 --height=540)
 
-[ $? -ne 0 ] && { echo "$(err "Cancelled")"; exit 1; }
+[ $? -ne 0 ] && { throw_err "Cancelled"; }
 
 selected() { echo "$PROGRAMS" | grep -qw "$1"; }
 
-echo "$(info "[12|13]: Setting up look of your desktop")"
+step="[12|13]: Setting up look of your desktop"; log_step
 case "$SELECTED_LOOK" in
   "windows")
     WALLPAPER_NAME="windows.jpg"
@@ -228,7 +223,7 @@ WALLPAPER="file://$WALLPAPERS_DIR/$WALLPAPER_NAME"
 gsettings set org.gnome.desktop.background picture-uri "$WALLPAPER"
 gsettings set org.gnome.desktop.background picture-uri-dark "$WALLPAPER"
 
-echo "$(info "[13|13]: Installing recommended programs")"
+step="[13|13]: Installing recommended programs"; log_step
 if selected "color-picker"; then
   $EXT_CLI install color-picker@tuberry
   $EXT_CLI enable color-picker@tuberry
@@ -247,35 +242,31 @@ if selected "vitals"; then
 fi
 
 if selected "minecraft"; then
-  if ! eval "$MC_INSTALLER"; then
-    echo "$(err "Minecraft installation failed. Try later by running this script again")"
-  fi
+  eval "$MC_INSTALLER" || throw_err "Minecraft installation failed. Try later by running this program again"
 fi
 
 if selected "youtube-music"; then
   if rpm -qa | grep -q youtube-music; then
     echo "$(warn "YouTube Music App is already installed")"
   else
+    ytm_release_url=$(echo "$YTM_DOWNLOAD_URL" | sed 's/api\.//; s/repos\///')
+    echo "Installing YouTube Music App from \"$ytm_release_url\"..."
     curl -s "$YTM_DOWNLOAD_URL" | grep browser_download_url | grep x86_64.rpm | cut -d '"' -f 4 | xargs curl -L -o "$HOME/Downloads/youtube-music.rpm"
     sudo dnf install -y "$HOME/Downloads/youtube-music.rpm"
   fi
 fi
 
 if selected "vicinae"; then
-  if ! eval "$VICINAE_INSTALLER"; then
-    echo "$(err "Vicinae installation failed. Try later by running this script again")"
-  fi
+  eval "$VICINAE_INSTALLER" || throw_err "Vicinae installation failed. Try later by running this program again"
 fi
 
 if selected "obs-hotkeys"; then
-  if ! eval "$OBS_HOTKEYS_INSTALLER"; then
-    echo "$(err "OBS Hotkeys installation failed. Try later by running this script again")"
-  fi
+  eval "$OBS_HOTKEYS_INSTALLER" || throw_err "OBS Hotkeys installation failed. Try later by running this program again"
 fi
 
 zenity --info \
   --title="Setup Complete!" \
-  --text="🎉 Your Fedora installation is ready to use! Have fun :)\n\nYou can install any app in the default Software App or from browser using .rpm, .AppImage or .snap file formats.\n\nWhat was done:\n• Package manager optimized\n• System updated\n• RPM Fusion enabled\n• Essential codecs installed\n• Boot time reduced\n• Terminal utilities installed (zsh, oh-my-zsh)\n• Default music app changed\n• Essential programs installed\n• Unnecessary programs removed\n• System settings tweaked\n• GNOME extensions installed\n• Desktop look configured\n• Selected programs installed\n\n⚠️ Your system needs to reboot for all changes to take effect." \
+  --text="🎉 Your Fedora installation is ready to use! Have fun :)\n\nYou can install any app in the default Software App or from browser using .rpm (x86_64), .AppImage or .snap file formats.\n\nWhat was done:\n• Package manager optimized\n• System updated\n• RPM Fusion enabled\n• Essential codecs installed\n• Boot time reduced\n• Terminal utilities installed (zsh, oh-my-zsh)\n• Default music app changed\n• Essential programs installed\n• Unnecessary programs removed\n• System settings tweaked\n• GNOME extensions installed\n• Desktop look configured\n• Selected programs installed\n\n⚠️ Your system needs to reboot for all changes to take effect." \
   --width=960 --height=540
 
 zenity --question \
