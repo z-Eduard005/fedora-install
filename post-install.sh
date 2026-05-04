@@ -27,6 +27,7 @@ warn() { printf "\033[1;33m%s\033[0m" "$1"; }
 info() { printf "\033[1;34m%s\033[0m" "$1"; }
 throw_err() {
   echo "$(err "$1")"
+  echo "$(warn "Try one more time...")"
   zenity --info \
   --title="Error happend:" \
   --text="$1" \
@@ -177,7 +178,7 @@ EOF
 
 step="[11|13]: Installing essential gnome extensions"
 run_the_step && {
-  $EXT_CLI install appindicatorsupport@rgcjonas.gmail.com quick-lang-switch@ankostis.gmail.com blur-my-shell@aunetx just-perfection-desktop@just-perfection Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com || throw_err "Error while installing gnome extensions. Try again later"
+  $EXT_CLI install appindicatorsupport@rgcjonas.gmail.com quick-lang-switch@ankostis.gmail.com blur-my-shell@aunetx just-perfection-desktop@just-perfection Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com || throw_err "Error while installing gnome extensions"
   $EXT_CLI disable background-logo@fedorahosted.org Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com || echo "$(warn "Some extensions are not disabled, so you might see some visual issues, disable them, if you need, in Extensions Manager app")"
 } && save_step
 
@@ -186,7 +187,7 @@ mkdir -p "$WALLPAPERS_DIR" "$PROJECT_DIR/data"
 for f in "${WALLPAPER_FILENAMES[@]}"; do
   [ -f "$WALLPAPERS_DIR/$f" ] || curl -fsSL "$WALLPAPERS_URL/$f" -o "$WALLPAPERS_DIR/$f" || echo "$(warn "Wallpapers failed to install")"
 done
-curl -fsSL "$RAW_GITHUB/dash-to-panel.conf" -o "$PROJECT_DIR/data/dash-to-panel.conf" || throw_err 'Failed to download "dash-to-panel.conf". Try again later'
+curl -fsSL "$RAW_GITHUB/dash-to-panel.conf" -o "$PROJECT_DIR/data/dash-to-panel.conf" || throw_err 'Failed to download "dash-to-panel.conf"'
 
 SELECTED_LOOK=$(zenity --list --radiolist \
   --title="Desktop Look" \
@@ -221,7 +222,7 @@ case "$SELECTED_LOOK" in
       cat "$PROJECT_DIR/data/dash-to-panel.conf" | dconf load "$DTP_CONF_PATH"
       $EXT_CLI enable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com
       $EXT_CLI disable dash-to-dock@micxgx.gmail.com hidetopbar@mathieu.bidon.ca
-    ) || echo "$(warn "Failed to set 'windows' style. Try again later")"
+    ) || echo "$(warn "Failed to set 'windows' style. Try again")"
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
     ;;
   "macos")
@@ -231,7 +232,7 @@ case "$SELECTED_LOOK" in
       $EXT_CLI install dash-to-dock@micxgx.gmail.com
       $EXT_CLI enable dash-to-dock@micxgx.gmail.com
       $EXT_CLI disable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com
-    ) || echo "$(warn "Failed to set 'macos' style. Try again later")"
+    ) || echo "$(warn "Failed to set 'macos' style. Try again")"
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
     ;;
   "linux")
@@ -239,7 +240,7 @@ case "$SELECTED_LOOK" in
     (
       set -e
       $EXT_CLI disable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com
-    ) || echo "$(warn "Failed to set 'linux' style. Try again later")"
+    ) || echo "$(warn "Failed to set 'linux' style. Try again")"
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-light'
     ;;
 esac
@@ -269,7 +270,7 @@ step="[13|13]: Installing recommended programs"; log_step
     $EXT_CLI install Vitals@CoreCoding.com
     $EXT_CLI enable Vitals@CoreCoding.com
   fi
-) || echo "$(warn "Some extensions failed to enable. Try again later")"
+) || echo "$(warn "Some extensions failed to enable. Try again")"
 
 if selected "minecraft"; then
   eval "$MC_INSTALLER" || echo "$(warn "Minecraft installation failed. Try later by running this program again")"
@@ -293,7 +294,7 @@ if selected "youtube-music"; then
       [ $is_ytm_exists -eq 0 ] && sudo dnf remove -y youtube-music
       curl -s "$YTM_DOWNLOAD_URL" | grep browser_download_url | grep x86_64.rpm | cut -d '"' -f 4 | xargs curl -L -o "$HOME/Downloads/youtube-music.rpm"
       sudo dnf install -y "$HOME/Downloads/youtube-music.rpm"
-    ) || echo "$(warn "Error while installing Youtube Music App. Try again later")"
+    ) || echo "$(warn "Error while installing Youtube Music App. Try again")"
   fi
 fi
 
