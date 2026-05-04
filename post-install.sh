@@ -5,7 +5,6 @@ OBS_HOTKEYS_INSTALLER='sh -c "$(curl -fsSL https://raw.githubusercontent.com/z-E
 VICINAE_INSTALLER='sh -c "$(curl -fsSL https://raw.githubusercontent.com/z-Eduard005/gnome-vicinae-installer/main/install.sh)"'
 OMZ_INSTALLER='sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended'
 YTM_DOWNLOAD_URL="https://api.github.com/repos/pear-devs/pear-desktop/releases/latest"
-RPM_FUSION_CMD="https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
 EXT_CLI="$HOME/.local/bin/gnome-extensions-cli"
 WALLPAPERS_DIR="$HOME/.local/share/backgrounds"
 WALLPAPERS_URL="$RAW_GITHUB/wallpapers"
@@ -15,6 +14,10 @@ PROJECT_DIR="$HOME/Programs/fedora-post-install"
 LIBREOFFICE_USER_DIR="$HOME/.config/libreoffice/4/user"
 DTP_CONF_PATH="/org/gnome/shell/extensions/dash-to-panel/"
 
+RPM_FUSION_PKGS=(
+  "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm"
+  "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
+)
 REMOVE_PKGS=(gnome-tour baobab malcontent-control yelp)
 DNF_PKGS=(python3-pip zsh gnome-tweaks steam)
 CODEC_PKGS=(x264 obs-studio-plugin-x264)
@@ -97,11 +100,11 @@ sudo dnf upgrade -y --skip-unavailable && sudo flatpak update || {
   sudo all_proxy="socks5://127.0.0.1:9050" dnf upgrade --refresh -y --skip-unavailable
   sudo all_proxy="socks5://127.0.0.1:9050" flatpak update
 }
-fwupdmgr refresh >/dev/null 2>&1 && fwupdmgr update >/dev/null 2>&1
+sudo fwupdmgr refresh >/dev/null 2>&1 && sudo fwupdmgr update >/dev/null 2>&1
 
 step="[3|13]: Enabling the RPM Fusion repository (for more packages)"
 run_the_step && {
-  sudo dnf install -y "$RPM_FUSION_CMD" || throw_err "RPM Fusion enabling error"
+  sudo dnf install -y "${RPM_FUSION_PKGS[@]}" || throw_err "RPM Fusion enabling error"
 } && save_step
 
 step="[4|13]: Installing essential codecs"
@@ -219,7 +222,7 @@ case "$SELECTED_LOOK" in
     (
       set -e
       $EXT_CLI install gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com
-      cat "$PROJECT_DIR/data/dash-to-panel.conf" | dconf load "$DTP_CONF_PATH"
+      dconf load "$DTP_CONF_PATH" < "$PROJECT_DIR/data/dash-to-panel.conf"
       $EXT_CLI enable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com
       $EXT_CLI disable dash-to-dock@micxgx.gmail.com hidetopbar@mathieu.bidon.ca
     ) || echo "$(warn "Failed to set 'windows' style. Try again")"
@@ -278,8 +281,9 @@ fi
 
 if selected "youtube-music"; then
   proceed_ytm_install=true
-  rpm -qa | grep -q youtube-music
-  is_ytm_exists=$?
+
+  is_ytm_exists=0
+  rpm -qa | grep -q youtube-music && is_ytm_exists=1
 
   [ $is_ytm_exists -eq 0 ] && {
     echo "$(warn "YouTube Music App is already installed")"
