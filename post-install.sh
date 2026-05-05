@@ -19,15 +19,26 @@ RPM_FUSION_PKGS=(
   "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
 )
 REMOVE_PKGS=(gnome-tour baobab malcontent-control yelp)
-DNF_PKGS=(python3-pip zsh gnome-tweaks steam)
 CODEC_PKGS=(x264 obs-studio-plugin-x264)
-FLATHUB_PKGS=(com.mattjakeman.ExtensionManager com.usebottles.bottles)
-FLATPAK_PKGS=(com.github.neithern.g4music)
+DNF_PKGS=(
+  "python3-pip"
+  "zsh"
+  "gnome-tweaks"
+  "steam|com.valvesoftware.Steam"
+)
+FLATHUB_PKGS=(
+  "com.mattjakeman.ExtensionManager|gnome-extensions-manager"
+  "com.usebottles.bottles|bottles"
+)
+FLATPAK_PKGS=(
+  "com.github.neithern.g4music|g4music"
+)
 
 success() { printf "\033[1;32m%s\033[0m" "$1"; }
 err() { printf "\033[1;31m%s\033[0m" "$1"; }
 warn() { printf "\033[1;33m%s\033[0m" "$1"; }
 info() { printf "\033[1;34m%s\033[0m" "$1"; }
+
 throw_err() {
   echo "$(err "$1")"
   echo "$(warn "Try one more time...")"
@@ -40,11 +51,7 @@ throw_err() {
 
 ask_confirm() {
   read -rp "$(warn "$1 [y/N]: ")" proceed
-  if [[ "$proceed" == [yY] ]]; then
-    return 0
-  else
-    return 1
-  fi
+  [[ "$proceed" == [yY] ]]
 }
 
 set_dnf_conf_option() {
@@ -86,14 +93,12 @@ mkdir -p "$PROJECT_DIR"
 STATE_FILE="$PROJECT_DIR/state"
 [ ! -f "$STATE_FILE" ] && touch "$STATE_FILE"
 
-step="[1|13]: Configuring system package manager"
-log_step
+step="[1|13]: Configuring system package manager"; log_step
 set_dnf_conf_option "max_parallel_downloads" "15"
 set_dnf_conf_option "fastestmirror" "True"
 set_dnf_conf_option "installonly_limit" "2"
 
-step="[2|13]: Updating the system"
-log_step
+step="[2|13]: Updating the system"; log_step
 sudo dnf upgrade -y --skip-unavailable && sudo flatpak update || {
   sudo dnf install -y tor
   sudo systemctl start tor
@@ -114,13 +119,75 @@ run_the_step && {
 
 step="[5|13]: Installing essential programs"
 run_the_step && {
+  declare -A installed=(
+    [rpm]="$(rpm -qa --qf '%{NAME}\n' 2>/dev/null)"
+    [flathub]="$(flatpak list --app --columns=application,origin 2>/dev/null | awk '$2=="flathub" {print $1}')"
+    [fedora]="$(flatpak list --app --columns=application,origin 2>/dev/null | awk '$2=="fedora"  {print $1}')"
+  )
+
+  declare -A remove_cmd=(
+    [rpm]="sudo dnf remove -y"
+    [flathub]="sudo flatpak remove -y"
+    [fedora]="sudo flatpak remove -y"
+  )
+
+  declare -A pkg_map=(
+    [DNF_PKGS]="rpm"
+    [FLATHUB_PKGS]="flathub"
+    [FLATPAK_PKGS]="fedora"
+  )
+
+  final_rpm=()
+  final_flathub=()
+  final_fedora=()
+
+  for arr_name in "${!pkg_map[@]}"; do
+    install_key="${pkg_map[$arr_name]}"
+    declare -n pkg_arr="$arr_name"
+
+    for entry in "${pkg_arr[@]}"; do
+      IFS='|' read -ra names <<< "$entry"
+      conflict_key="" conflict_name=""
+
+      for name in "${names[@]}"; do
+        for against_key in "${!installed[@]}"; do
+          [[ "$against_key" == "$install_key" ]] && continue
+          
+          if grep -Fqx "$name" <<< "${installed[$against_key]}"; then
+            conflict_key="$against_key"
+            conflict_name="$name"
+            break 2
+          fi
+        done
+      done
+
+      add=true
+      if [[ -n "$conflict_key" ]]; then
+        echo "$(warn "'$conflict_name' already installed as $conflict_key")"
+        if ask_confirm "Reinstall as $install_key?"; then
+          eval "${remove_cmd[$conflict_key]} '$conflict_name'" || throw_err "Failed to remove $conflict_name"
+        else
+          add=false
+        fi
+      fi
+
+      if $add; then
+        declare -n final_arr="final_${install_key}"
+        final_arr+=("${entry%%|*}")
+        unset -n final_arr
+      fi
+    done
+
+    unset -n pkg_arr
+  done
+
   (
     set -e
-    sudo dnf install -y "${DNF_PKGS[@]}"
-    sudo flatpak install -y flathub "${FLATHUB_PKGS[@]}"
-    sudo flatpak install -y fedora "${FLATPAK_PKGS[@]}"
+    [[ ${#final_rpm[@]} -gt 0 ]] && sudo dnf install -y "${final_rpm[@]}"
+    [[ ${#final_flathub[@]} -gt 0 ]] && sudo flatpak install -y flathub "${final_flathub[@]}"
+    [[ ${#final_fedora[@]} -gt 0 ]] && sudo flatpak install -y fedora "${final_fedora[@]}"
     pip3 install $(basename $EXT_CLI)
-    [ ! -d "$HOME/.oh-my-zsh" ] && eval "$OMZ_INSTALLER"
+    [ -d "$HOME/.oh-my-zsh" ] || eval "$OMZ_INSTALLER"
   ) || throw_err "Error while installing essential programs"
 } && save_step
 
