@@ -7,19 +7,20 @@ OMZ_INSTALLER='sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohm
 YTM_DOWNLOAD_URL="https://api.github.com/repos/pear-devs/pear-desktop/releases/latest"
 EXT_CLI="$HOME/.local/bin/gnome-extensions-cli"
 WALLPAPERS_DIR="$HOME/.local/share/backgrounds"
-WALLPAPERS_URL="$RAW_GITHUB/wallpapers"
 WALLPAPER_FILENAMES=(windows.jpg macos.png linux.jpg)
+CONF_FILENAMES=(dash-to-panel.conf view-app-grid-symbolic.svg registrymodifications.xcu)
 DNF_CONF="/etc/dnf/dnf.conf"
+ADWAITA_ACTIONS_ICONS_PATH="/usr/share/icons/Adwaita/scalable/actions"
 PROJECT_DIR="$HOME/Programs/fedora-post-install"
 LIBREOFFICE_USER_DIR="$HOME/.config/libreoffice/4/user"
 DTP_CONF_PATH="/org/gnome/shell/extensions/dash-to-panel/"
-
 RPM_FUSION_PKGS=(
   "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm"
   "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
 )
 REMOVE_PKGS=(gnome-tour baobab malcontent-control yelp)
 CODEC_PKGS=(x264 obs-studio-plugin-x264)
+ALLOWERASING_DNF_PKGS=(power-profiles-daemon)
 DNF_PKGS=(
   "python3-pip"
   "zsh"
@@ -50,8 +51,13 @@ throw_err() {
 }
 
 ask_confirm() {
-  read -rp "$(warn "$1 [y/N]: ")" proceed
-  [[ "$proceed" == [yY] ]]
+  zenity --question \
+  --title="Confirmation" \
+  --width=400 \
+  --height=100 \
+  --ok-label="Yes" \
+  --cancel-label="No" \
+  --text="$1"
 }
 
 set_dnf_conf_option() {
@@ -72,12 +78,20 @@ save_step() {
   echo "$step" >> "$STATE_FILE"
 }
 
+is_step_done() {
+  grep -qxF "$step" "$STATE_FILE"
+}
+
 run_the_step() {
-  grep -qxF "$step" "$STATE_FILE" && {
+  is_step_done && {
     echo "$(info "$(echo "$step" | sed 's/]:.*$/]:/') skipped")"
     return 1
   }
   log_step
+}
+
+ext_cli_disable() {
+  $EXT_CLI disable "$@"; $EXT_CLI update "$@"
 }
 
 [ "$EUID" -eq 0 ] && { echo "$(err 'Do not run this script with "sudo"!')" >&2; exit 1; }
@@ -152,7 +166,7 @@ run_the_step && {
       for name in "${names[@]}"; do
         for against_key in "${!installed[@]}"; do
           [[ "$against_key" == "$install_key" ]] && continue
-          if grep -Fqx "$name" <<< "${installed[$against_key]}"; then
+          if grep -qxF "$name" <<< "${installed[$against_key]}"; then
             conflict_key="$against_key"
             conflict_name="$name"
             break 2
@@ -162,7 +176,7 @@ run_the_step && {
 
       add=true
       if [[ -n "$conflict_key" ]]; then
-        echo "$(warn "'$conflict_name' already installed as $conflict_key")"
+        echo "$(warn "'$conflict_name' already installed as $conflict_key, but it is recommended to use $install_key version.")"
         if ask_confirm "Do you want to reinstall as $install_key? (this will delete app data)"; then
           eval "${remove_cmd[$conflict_key]} '$conflict_name'" || throw_err "Failed to remove $conflict_name"
         else
@@ -182,10 +196,11 @@ run_the_step && {
 
   (
     set -e
+    sudo dnf install -y "${ALLOWERASING_DNF_PKGS[@]}" --allowerasing
     [[ ${#final_rpm[@]} -gt 0 ]] && sudo dnf install -y "${final_rpm[@]}"
     [[ ${#final_flathub[@]} -gt 0 ]] && sudo flatpak install -y flathub "${final_flathub[@]}"
     [[ ${#final_fedora[@]} -gt 0 ]] && sudo flatpak install -y fedora "${final_fedora[@]}"
-    pip3 install $(basename $EXT_CLI)
+    pip3 install "$(basename $EXT_CLI)"
     [ -d "$HOME/.oh-my-zsh" ] || eval "$OMZ_INSTALLER"
   ) || throw_err "Error while installing essential programs"
 } && save_step
@@ -214,12 +229,12 @@ run_the_step && {
 
 step="[9|13]: Changing default music app"
 run_the_step && {
-  xdg-mime default com.github.neithern.g4music.desktop audio/mpeg audio/flac audio/x-wav audio/ogg || echo "$(warn "Failed to set default music app")"
+  flatpak list --app | grep -q "com.github.neithern.g4music" && xdg-mime default com.github.neithern.g4music.desktop audio/mpeg audio/flac audio/x-wav audio/ogg || echo "$(warn "Failed to set default music app")"
 } && save_step
 
 step="[10|13]: Tweaking system settings"
 run_the_step && {
-  powerprofilesctl set performance
+  powerprofilesctl set performance >/dev/null 2>&1
   gsettings set org.gnome.desktop.interface enable-hot-corners false
   gsettings set org.gnome.shell.app-switcher current-workspace-only true
   gsettings set org.gnome.mutter dynamic-workspaces false
@@ -231,32 +246,25 @@ run_the_step && {
   gsettings set org.gnome.desktop.wm.keybindings close "['<Alt>w']"
   gsettings set org.gnome.shell favorite-apps "['org.gnome.Ptyxis.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Settings.desktop', 'com.mattjakeman.ExtensionManager.desktop', 'org.gnome.Software.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.SystemMonitor.desktop', 'org.mozilla.firefox.desktop', 'steam.desktop']"
   gsettings set org.gnome.desktop.input-sources xkb-options "['grp:caps_toggle','lv3:ralt_switch']"
-
-  mkdir -p "$LIBREOFFICE_USER_DIR"
-  cat > "$LIBREOFFICE_USER_DIR/registrymodifications.xcu" << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-<item oor:path="/org.openoffice.Office.UI.ToolbarMode/Applications/org.openoffice.Office.UI.ToolbarMode:Application['Writer']"><prop oor:name="Active" oor:op="fuse"><value>notebookbar.ui</value></prop></item>
-<item oor:path="/org.openoffice.Office.UI.ToolbarMode/Applications/org.openoffice.Office.UI.ToolbarMode:Application['Calc']"><prop oor:name="Active" oor:op="fuse"><value>notebookbar.ui</value></prop></item>
-<item oor:path="/org.openoffice.Office.UI.ToolbarMode/Applications/org.openoffice.Office.UI.ToolbarMode:Application['Impress']"><prop oor:name="Active" oor:op="fuse"><value>notebookbar.ui</value></prop></item>
-<item oor:path="/org.openoffice.Office.UI.ToolbarMode/Applications/org.openoffice.Office.UI.ToolbarMode:Application['Draw']"><prop oor:name="Active" oor:op="fuse"><value>notebookbar.ui</value></prop></item>
-<item oor:path="/org.openoffice.Office.Common/Misc"><prop oor:name="SymbolStyle" oor:op="fuse"><value>sukapura_svg</value></prop></item>
-</oor:items>
-EOF
 } && save_step
 
 step="[11|13]: Installing essential gnome extensions"
 run_the_step && {
   $EXT_CLI install appindicatorsupport@rgcjonas.gmail.com quick-lang-switch@ankostis.gmail.com blur-my-shell@aunetx just-perfection-desktop@just-perfection Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com || throw_err "Error while installing gnome extensions"
-  $EXT_CLI disable background-logo@fedorahosted.org Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com || echo "$(warn "Some extensions are not disabled, so you might see some visual issues, disable them, if you need, in Extensions Manager app")"
+  ext_cli_disable background-logo@fedorahosted.org Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com || echo "$(warn "Some extensions are not disabled, so you might see some visual issues, disable them, if you need, in Extensions Manager app")"
 } && save_step
 
 step="[12|13]: Setting up look of your desktop"; log_step
-mkdir -p "$WALLPAPERS_DIR" "$PROJECT_DIR/data"
+sudo mkdir -p "$WALLPAPERS_DIR" "$PROJECT_DIR/data" "$ADWAITA_ACTIONS_ICONS_PATH" "$LIBREOFFICE_USER_DIR"
 for f in "${WALLPAPER_FILENAMES[@]}"; do
-  [ -f "$WALLPAPERS_DIR/$f" ] || curl -fsSL "$WALLPAPERS_URL/$f" -o "$WALLPAPERS_DIR/$f" || echo "$(warn "Wallpapers failed to install")"
+  [ -f "$WALLPAPERS_DIR/$f" ] || curl -fsSL "$RAW_GITHUB/wallpapers/$f" -o "$WALLPAPERS_DIR/$f" || echo "$(warn "Wallpapers failed to install")"
 done
-curl -fsSL "$RAW_GITHUB/dash-to-panel.conf" -o "$PROJECT_DIR/data/dash-to-panel.conf" || throw_err 'Failed to download "dash-to-panel.conf"'
+for f in "${CONF_FILENAMES[@]}"; do
+  [ -f "$PROJECT_DIR/data/$f" ] || curl -fsSL "$RAW_GITHUB/conf/$f" -o "$PROJECT_DIR/data/$f" || throw_err 'Failed to download "$file"'
+done
+
+step="Pre-configure registrymodifications.xcu"
+! is_step_done && cp "$PROJECT_DIR/data/registrymodifications.xcu" "$LIBREOFFICE_USER_DIR/registrymodifications.xcu" && save_step
 
 SELECTED_LOOK=$(zenity --list --radiolist \
   --title="Desktop Look" \
@@ -288,11 +296,11 @@ case "$SELECTED_LOOK" in
     (
       set -e
       $EXT_CLI install gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com
-      dconf load "$DTP_CONF_PATH" < "$PROJECT_DIR/data/dash-to-panel.conf"
+      step="Pre-configure dash-to-panel.conf"
+      ! is_step_done && dconf load "$DTP_CONF_PATH" < "$PROJECT_DIR/data/dash-to-panel.conf" && save_step
       $EXT_CLI enable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com
-      $EXT_CLI disable dash-to-dock@micxgx.gmail.com hidetopbar@mathieu.bidon.ca
+      ext_cli_disable dash-to-dock@micxgx.gmail.com hidetopbar@mathieu.bidon.ca
     ) || echo "$(warn "Failed to set 'windows' style. Try again")"
-    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
     ;;
   "macos")
     WALLPAPER_NAME="${WALLPAPER_FILENAMES[1]}"
@@ -300,17 +308,15 @@ case "$SELECTED_LOOK" in
       set -e
       $EXT_CLI install dash-to-dock@micxgx.gmail.com
       $EXT_CLI enable dash-to-dock@micxgx.gmail.com
-      $EXT_CLI disable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com
+      ext_cli_disable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com
     ) || echo "$(warn "Failed to set 'macos' style. Try again")"
-    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
     ;;
   "linux")
     WALLPAPER_NAME="${WALLPAPER_FILENAMES[2]}"
     (
       set -e
-      $EXT_CLI disable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com
+      ext_cli_disable gtk4-ding@smedius.gitlab.com dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com
     ) || echo "$(warn "Failed to set 'linux' style. Try again")"
-    gsettings set org.gnome.desktop.interface color-scheme 'prefer-light'
     ;;
 esac
 
@@ -320,7 +326,10 @@ esac
   gsettings set org.gnome.desktop.background picture-uri-dark "$WALLPAPER"
 }
 
-step="[13|13]: Installing recommended programs"; log_step
+sudo cp "$PROJECT_DIR/data/view-app-grid-symbolic.svg" "$ADWAITA_ACTIONS_ICONS_PATH/view-app-grid-symbolic.svg"
+sudo gtk-update-icon-cache /usr/share/icons/Adwaita
+
+step="[13|13]: Installing selected programs"; log_step
 (
   set -e
   if selected "color-picker"; then
