@@ -42,6 +42,15 @@ FLATPAK_PKGS=("com.github.neithern.g4music|g4music")
 NVIDIA_DRIVER_PKGS=(akmod-nvidia xorg-x11-drv-nvidia-cuda kernel-devel kernel-headers gcc make dkms acpid libglvnd-glx libglvnd-opengl libglvnd-devel pkgconfig egl-wayland)
 INTEL_DRIVER_PKGS=(intel-media-driver)
 AMD_DRIVER_SWAP_PKG=(mesa-va-drivers mesa-va-drivers-freeworld)
+SCX_LOADER_CONF="/etc/scx_loader.toml"
+CACHY_COPRS=(
+  bieszczaders/kernel-cachyos
+  bieszczaders/kernel-cachyos-addons
+)
+CACHY_PKGS=(kernel-cachyos kernel-cachyos-devel-matched)
+ALLOWERASING_CACHY_PKGS=(cachyos-settings scx-scheds-git scx-tools-git)
+KERNEL_POSTINST_DIR="/etc/kernel/postinst.d"
+NEWEST_CACHY_KERNEL="\$(ls /boot | grep 'vmlinuz.*cachy' | sort -V | tail -1)"
 
 success() { printf "\033[1;32m%s\033[0m" "$1"; }
 err() { printf "\033[1;31m%s\033[0m" "$1"; }
@@ -75,6 +84,16 @@ set_dnf_conf_option() {
     sudo sed -i "s|^${key}=.*|${key}=${value}|" "$DNF_CONF"
   else
     echo "${key}=${value}" | sudo tee -a "$DNF_CONF" >/dev/null
+  fi
+}
+
+set_scx_loader_option() {
+  local key="$1"
+  local value="$2"
+  if grep -qE "^${key}[[:space:]]*=" "$SCX_LOADER_CONF"; then
+    sudo sed -i "s|^${key}[[:space:]]*=.*|${key} = \"${value}\"|" "$SCX_LOADER_CONF"
+  else
+    sudo sed -i "1i${key} = \"${value}\"" "$SCX_LOADER_CONF"
   fi
 }
 
@@ -117,12 +136,12 @@ mkdir -p "$PROJECT_DIR"
 STATE_FILE="$PROJECT_DIR/state"
 [ ! -f "$STATE_FILE" ] && touch "$STATE_FILE"
 
-step="[1|13]: Configuring system package manager"; log_step
+step="[1|14]: Configuring system package manager"; log_step
 set_dnf_conf_option "max_parallel_downloads" "15"
 set_dnf_conf_option "fastestmirror" "True"
 set_dnf_conf_option "installonly_limit" "2"
 
-step="[2|13]: Updating the system"; log_step
+step="[2|14]: Updating the system"; log_step
 sudo dnf upgrade -y --skip-unavailable && sudo flatpak update || {
   sudo dnf install -y tor
   sudo systemctl start tor
@@ -132,12 +151,12 @@ sudo dnf upgrade -y --skip-unavailable && sudo flatpak update || {
 sudo fwupdmgr refresh --force >/dev/null 2>&1
 sudo fwupdmgr update -y >/dev/null 2>&1
 
-step="[3|13]: Enabling the RPM Fusion repository (for more packages)"
+step="[3|14]: Enabling the RPM Fusion repository (for more packages)"
 run_the_step && {
   sudo dnf install -y "${RPM_FUSION_PKGS[@]}" || throw_err "RPM Fusion enabling error"
 } && save_step
 
-step="[4|13]: Installing essential drivers and codecs"
+step="[4|14]: Installing essential drivers and codecs"
 run_the_step && {
   (
     set -e
@@ -148,7 +167,34 @@ run_the_step && {
   ) || throw_err "Error while installing essential drivers and codecs"
 } && save_step
 
-step="[5|13]: Installing essential programs"
+step="[5|14]: Installing cachyos kernel (for better performance)"
+run_the_step && {
+  (
+    set -e
+    for copr in "${CACHY_COPRS[@]}"; do
+      sudo dnf copr enable -y "$copr"
+    done
+    sudo dnf install -y "${CACHY_PKGS[@]}"
+
+    sudo mkdir -p "$KERNEL_POSTINST_DIR"
+    sudo grubby --set-default="/boot/$(eval "$NEWEST_CACHY_KERNEL")"
+    sudo tee "$KERNEL_POSTINST_DIR/99-default" > /dev/null << EOF
+#!/bin/sh
+set -e
+grubby --set-default="/boot/${NEWEST_CACHY_KERNEL}"
+EOF
+    sudo chown root:root "$KERNEL_POSTINST_DIR/99-default"
+    sudo chmod u+rx "$KERNEL_POSTINST_DIR/99-default"
+
+    sudo dnf install -y "${ALLOWERASING_CACHY_PKGS[@]}" --allowerasing
+    sudo dracut -f
+    sudo scxctl start --sched lavd --mode gaming || sudo scxctl switch --sched lavd --mode gaming
+    set_scx_loader_option "default_sched" "scx_lavd"
+    set_scx_loader_option "default_mode" "Gaming"
+  ) || throw_err "Error while installing cachyos kernel"
+} && save_step
+
+step="[6|14]: Installing essential programs"
 run_the_step && {
   declare -A installed=(
     [rpm]="$(rpm -qa --qf '%{NAME}\n' 2>/dev/null)"
@@ -223,18 +269,18 @@ run_the_step && {
   ) || throw_err "Error while installing essential programs"
 } && save_step
 
-step="[6|13]: Removing unnecessary programs"
+step="[7|14]: Removing unnecessary programs"
 run_the_step && {
   sudo dnf remove -y "${REMOVE_PKGS[@]}" || throw_err "Error while removing unnecessary programs"
 } && save_step
 
-step="[7|13]: Make the system start faster"
+step="[8|14]: Make the system start faster"
 run_the_step && {
   sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=3/' /etc/default/grub
   sudo grub2-mkconfig -o /boot/grub2/grub.cfg || throw_err "Error while generating grub config"
 } && save_step
 
-step="[8|13]: Tweaking terminal"
+step="[9|14]: Tweaking terminal"
 run_the_step && {
   if ! grep -q 'source ~/.bashrc' "$HOME/.zshrc"; then
     echo -e "\n# Source the .bashrc config\n[ -f ~/.bashrc ] && source ~/.bashrc" >> "$HOME/.zshrc"
@@ -245,12 +291,12 @@ run_the_step && {
   [ "$SHELL" != "$(which zsh)" ] && chsh -s "$(which zsh)"
 } && save_step
 
-step="[9|13]: Changing default music app"
+step="[10|14]: Changing default music app"
 run_the_step && {
   flatpak list --app | grep -q "com.github.neithern.g4music" && xdg-mime default com.github.neithern.g4music.desktop audio/mpeg audio/flac audio/x-wav audio/ogg || echo "$(warn "Failed to set default music app")"
 } && save_step
 
-step="[10|13]: Tweaking system settings"
+step="[11|14]: Tweaking system settings"
 run_the_step && {
   powerprofilesctl set performance >/dev/null 2>&1
   gsettings set org.gnome.desktop.interface enable-hot-corners false
@@ -266,13 +312,13 @@ run_the_step && {
   gsettings set org.gnome.desktop.input-sources xkb-options "['grp:caps_toggle','lv3:ralt_switch']"
 } && save_step
 
-step="[11|13]: Installing essential gnome extensions"
+step="[12|14]: Installing essential gnome extensions"
 run_the_step && {
   $EXT_CLI install appindicatorsupport@rgcjonas.gmail.com quick-lang-switch@ankostis.gmail.com blur-my-shell@aunetx just-perfection-desktop@just-perfection Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com || throw_err "Error while installing gnome extensions"
   ext_cli_disable background-logo@fedorahosted.org Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com || echo "$(warn "Some extensions are not disabled, so you might see some visual issues, disable them, if you need, in Extensions Manager app")"
 } && save_step
 
-step="[12|13]: Setting up look of your desktop"; log_step
+step="[13|14]: Setting up look of your desktop"; log_step
 sudo mkdir -p "$WALLPAPERS_DIR" "$PROJECT_DIR/data" "$ADWAITA_ACTIONS_ICONS_PATH" "$LIBREOFFICE_USER_DIR"
 for f in "${WALLPAPER_FILENAMES[@]}"; do
   [ -f "$WALLPAPERS_DIR/$f" ] || curl -fsSL "$RAW_GITHUB/wallpapers/$f" -o "$WALLPAPERS_DIR/$f" || echo "$(warn "Wallpapers failed to install")"
@@ -347,7 +393,7 @@ esac
 sudo cp "$PROJECT_DIR/data/view-app-grid-symbolic.svg" "$ADWAITA_ACTIONS_ICONS_PATH/view-app-grid-symbolic.svg"
 sudo gtk-update-icon-cache /usr/share/icons/Adwaita
 
-step="[13|13]: Installing selected programs"; log_step
+step="[14|14]: Installing selected programs"; log_step
 (
   set -e
   if selected "color-picker"; then
