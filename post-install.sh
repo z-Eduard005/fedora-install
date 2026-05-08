@@ -1,4 +1,5 @@
 #!/bin/bash
+set -uo pipefail
 export LANG=C
 export LC_ALL=C
 
@@ -14,17 +15,18 @@ WALLPAPERS_DIR="$HOME/.local/share/backgrounds"
 WALLPAPER_FILENAMES=(windows.jpg macos.png linux.jpg)
 CONF_FILENAMES=(dash-to-panel.conf view-app-grid-symbolic.svg registrymodifications.xcu)
 DNF_CONF="/etc/dnf/dnf.conf"
-ADWAITA_ICONS_PATH="/usr/share/icons/Adwaita"
-ADWAITA_ACTIONS_ICONS_PATH="$ADWAITA_ICONS_PATH/scalable/actions"
+ADWAITA_ICONS_DIR="/usr/share/icons/Adwaita"
+ADWAITA_ACTIONS_ICONS_DIR="$ADWAITA_ICONS_DIR/scalable/actions"
 PROJECT_DIR="$HOME/Programs/fedora-post-install"
 LIBREOFFICE_USER_DIR="$HOME/.config/libreoffice/4/user"
 DTP_CONF_PATH="/org/gnome/shell/extensions/dash-to-panel/"
-COMPLETE_SOUND_PATH="/usr/share/sounds/freedesktop/stereo/complete.oga"
-STEAMAPPS_PATH="$HOME/.steam/steam/steamapps"
+COMPLETE_SOUND_FILE="/usr/share/sounds/freedesktop/stereo/complete.oga"
+STEAMAPPS_DIR="$HOME/.steam/steam/steamapps"
 BOOKMARKS_FILE="$HOME/.config/gtk-3.0/bookmarks"
 SCX_LOADER_CONF="/etc/scx_loader.toml"
 KERNEL_POSTINST_DIR="/etc/kernel/postinst.d"
 NEWEST_CACHY_KERNEL="\$(ls /boot | grep 'vmlinuz.*cachy' | sort -V | tail -1)"
+STATE_FILE="$PROJECT_DIR/state"
 RPM_FUSION_PKGS=(
   "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm"
   "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
@@ -63,7 +65,7 @@ info() { printf "\033[1;34m%s\033[0m" "$1"; }
 
 throw_err() {
   echo -e "$(err "$1\nTry one more time...")"
-  pw-play "$COMPLETE_SOUND_PATH"
+  pw-play "$COMPLETE_SOUND_FILE"
   zenity --info \
   --title="Error happend:" \
   --text="$1" \
@@ -136,9 +138,7 @@ while true; do
   kill -0 "$$" || exit
 done 2>/dev/null &
 
-mkdir -p "$PROJECT_DIR"
-STATE_FILE="$PROJECT_DIR/state"
-[ ! -f "$STATE_FILE" ] && touch "$STATE_FILE"
+sudo mkdir -p "$PROJECT_DIR/data" "$KERNEL_POSTINST_DIR" "$WALLPAPERS_DIR" "$ADWAITA_ACTIONS_ICONS_DIR" "$LIBREOFFICE_USER_DIR"
 
 step="[1|14]: Configuring system package manager"; log_step
 set_dnf_conf_option "max_parallel_downloads" "15"
@@ -146,7 +146,7 @@ set_dnf_conf_option "fastestmirror" "True"
 set_dnf_conf_option "installonly_limit" "2"
 
 step="[2|14]: Updating the system"; log_step
-sudo dnf upgrade -y --skip-unavailable && sudo flatpak update || {
+sudo dnf upgrade --refresh -y --skip-unavailable && sudo flatpak update || {
   sudo dnf install -y tor
   sudo systemctl start tor
   sudo all_proxy="socks5://127.0.0.1:9050" dnf upgrade --refresh -y --skip-unavailable
@@ -186,7 +186,6 @@ run_the_step && {
     done
     sudo dnf install -y "${CACHY_PKGS[@]}"
 
-    sudo mkdir -p "$KERNEL_POSTINST_DIR"
     sudo grubby --set-default="/boot/$(eval "$NEWEST_CACHY_KERNEL")"
     sudo tee "$KERNEL_POSTINST_DIR/99-default" > /dev/null << EOF
 #!/bin/sh
@@ -323,6 +322,16 @@ run_the_step && {
   gsettings set org.gnome.nautilus.icon-view default-zoom-level 'small-plus'
   gsettings set org.gnome.nautilus.list-view default-zoom-level 'medium'
   gsettings set org.gnome.nautilus.preferences default-folder-viewer 'list-view'
+  gsettings set org.gtk.gtk4.Settings.FileChooser sort-directories-first true
+  gsettings set org.gnome.desktop.interface cursor-theme "macOS"
+
+  cp "$PROJECT_DIR/data/registrymodifications.xcu" "$LIBREOFFICE_USER_DIR/registrymodifications.xcu"
+  for f in "${TEMPLATE_FILENAMES[@]}"; do
+    cp "$PROJECT_DIR/data/$f" "$HOME/Templates/$f"
+  done
+  sed -i "1s|^|file://$STEAMAPPS_DIR Steamapps\n|" "$BOOKMARKS_FILE"
+  sed -i "1s|^|file://$WALLPAPERS_DIR Wallpapers\n|" "$BOOKMARKS_FILE"
+  nautilus -q >/dev/null 2>&1
 } && save_step
 
 step="[12|14]: Installing essential gnome extensions"
@@ -332,30 +341,12 @@ run_the_step && {
 } && save_step
 
 step="[13|14]: Setting up look of your desktop"; log_step
-sudo mkdir -p "$WALLPAPERS_DIR" "$PROJECT_DIR/data" "$ADWAITA_ACTIONS_ICONS_PATH" "$LIBREOFFICE_USER_DIR"
 for f in "${WALLPAPER_FILENAMES[@]}"; do
   [ -f "$WALLPAPERS_DIR/$f" ] || curl -fsSL "$RAW_GITHUB/wallpapers/$f" -o "$WALLPAPERS_DIR/$f" || echo "$(warn "Wallpapers failed to install")"
 done
 for f in "${CONF_FILENAMES[@]}"; do
   [ -f "$PROJECT_DIR/data/$f" ] || curl -fsSL "$RAW_GITHUB/data/$f" -o "$PROJECT_DIR/data/$f" || throw_err 'Failed to download "$file"'
 done
-
-step="Pre-configuring libreoffice settings"
-! is_step_done && cp "$PROJECT_DIR/data/registrymodifications.xcu" "$LIBREOFFICE_USER_DIR/registrymodifications.xcu" && save_step
-
-step="Creating template files"
-! is_step_done && {
-  for f in "${TEMPLATE_FILENAMES[@]}"; do
-    cp "$PROJECT_DIR/data/$f" "$HOME/Templates/$f"
-  done
-} && save_step
-
-step="Setting up additional nautilus bookmarks"
-! is_step_done && {
-  sed -i "1s|^|file://$STEAMAPPS_PATH Steamapps\n|" "$BOOKMARKS_FILE"
-  sed -i "1s|^|file://$WALLPAPERS_DIR Wallpapers\n|" "$BOOKMARKS_FILE"
-  nautilus -q >/dev/null 2>&1
-} && save_step
 
 SELECTED_LOOK=$(zenity --list --radiolist \
   --title="Desktop Look" \
@@ -417,8 +408,8 @@ esac
   gsettings set org.gnome.desktop.background picture-uri-dark "$WALLPAPER"
 }
 
-sudo cp "$PROJECT_DIR/data/view-app-grid-symbolic.svg" "$ADWAITA_ACTIONS_ICONS_PATH/view-app-grid-symbolic.svg"
-sudo gtk-update-icon-cache "$ADWAITA_ICONS_PATH"
+sudo cp "$PROJECT_DIR/data/view-app-grid-symbolic.svg" "$ADWAITA_ACTIONS_ICONS_DIR/view-app-grid-symbolic.svg"
+sudo gtk-update-icon-cache "$ADWAITA_ICONS_DIR"
 $EXT_CLI update >/dev/null 2>&1
 
 step="[14|14]: Installing selected programs"; log_step
