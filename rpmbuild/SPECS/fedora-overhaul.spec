@@ -4,7 +4,7 @@ Release:    1
 Summary:    Fedora setup tool
 License:    MIT
 Source0:    fedora-overhaul.tar.gz
-Requires:   curl git zenity pipewire-utils flatpak dnf-plugins-core grubby pciutils gtk3 gtk4 pkexec
+Requires:   curl git zenity pipewire-utils flatpak dnf-plugins-core grubby pciutils gtk3 gtk4
 BuildArch:  noarch
 
 %description
