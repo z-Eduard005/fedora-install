@@ -99,11 +99,11 @@ log_step() {
 }
 
 save_step() {
-  echo "${step#*]: }" >> "$STATE_FILE"
+  echo "${step#*]: }" | sudo tee -a "$STATE_FILE" > /dev/null
 }
 
 is_step_done() {
-  grep -qxF "${step#*]: }" "$STATE_FILE"
+  sudo grep -qxF "${step#*]: }" "$STATE_FILE"
 }
 
 run_the_step() {
@@ -135,7 +135,8 @@ echo ""
 step="[0|13]: Downloading the program data"
 run_the_step && {
   sudo rm -rf "$PROJECT_DIR"
-  sudo mkdir -p "$PROJECT_DIR" "$KERNEL_POSTINST_DIR" "$WALLPAPERS_DIR" "$ADWAITA_ACTIONS_ICONS_DIR" "$LIBREOFFICE_USER_DIR"
+  sudo mkdir -p "$PROJECT_DIR" "$KERNEL_POSTINST_DIR" "$ADWAITA_ACTIONS_ICONS_DIR"
+  mkdir -p "$WALLPAPERS_DIR" "$LIBREOFFICE_USER_DIR"
   sudo git clone --depth=1 "$GITHUB_REPO" "$PROJECT_DIR" || throw_err "Error while downloading the program data"
   sudo rm -rf "$PROJECT_DIR/.gitignore" "$PROJECT_DIR/.git/" "$PROJECT_DIR/docs/" "$PROJECT_DIR/rpmbuild/" "$PROJECT_DIR/build.sh"
   sudo touch "$STATE_FILE"
@@ -271,7 +272,9 @@ run_the_step && {
     [[ ${#final_fedora[@]} -gt 0 ]] && sudo flatpak install -y fedora "${final_fedora[@]}"
     pip3 install "$(basename $EXT_CLI)"
     [ -d "$HOME/.oh-my-zsh" ] || eval "$OMZ_INSTALLER"
-    sudo rpm --nodigest -i "$WIN_FONTS_PKG"
+    if ! rpm -q msttcore-fonts-installer >/dev/null 2>&1; then
+      sudo rpm --nodigest -i "$WIN_FONTS_PKG"
+    fi
   ) || throw_err "Error while installing essential programs"
 } && save_step
 
@@ -321,9 +324,9 @@ run_the_step && {
   gsettings set org.gnome.nautilus.preferences default-folder-viewer 'list-view'
   gsettings set org.gtk.gtk4.Settings.FileChooser sort-directories-first true
 
-  cp "$PROJECT_DIR/data/registrymodifications.xcu" "$LIBREOFFICE_USER_DIR/registrymodifications.xcu"
+  sudo cp "$PROJECT_DIR/data/registrymodifications.xcu" "$LIBREOFFICE_USER_DIR/registrymodifications.xcu"
   for f in "${TEMPLATE_FILENAMES[@]}"; do
-    cp "$PROJECT_DIR/data/$f" "$HOME/Templates/$f"
+    sudo cp "$PROJECT_DIR/data/$f" "$HOME/Templates/$f"
   done
   sed -i "1s|^|file://$STEAMAPPS_DIR Steamapps\n|" "$BOOKMARKS_FILE"
   sed -i "1s|^|file://$WALLPAPERS_DIR Wallpapers\n|" "$BOOKMARKS_FILE"
@@ -336,13 +339,19 @@ run_the_step && {
   ext_cli_disable background-logo@fedorahosted.org Vitals@CoreCoding.com hidetopbar@mathieu.bidon.ca rounded-window-corners@fxgn color-picker@tuberry dash-to-panel@jderose9.github.com dash-to-dock@micxgx.gmail.com gtk4-ding@smedius.gitlab.com || echo "$(warn "Some extensions are not disabled, so you might see some visual issues, disable them, if you need, in Extensions Manager app")"
 } && save_step
 
-step="[12|13]: Setting up look of your desktop"; log_step
-for f in "${WALLPAPER_FILENAMES[@]}"; do
-  cp "$PROJECT_DIR/data/$f" "$WALLPAPERS_DIR/$f"
-done
-cp -r "$PROJECT_DIR/data/macOS/" "$CURSORS_DIR"
-gsettings set org.gnome.desktop.interface cursor-theme "macOS"
+step="Initialising steam"
+! is_step_done && steam -silent > /dev/null 2>&1 & disown && save_step
 
+step="Copying wallpapers and cursor files"
+! is_step_done && {
+  for f in "${WALLPAPER_FILENAMES[@]}"; do
+    sudo cp "$PROJECT_DIR/data/wallpapers/$f" "$WALLPAPERS_DIR/$f"
+  done
+  sudo cp -r "$PROJECT_DIR/data/macOS/" "$CURSORS_DIR"
+  gsettings set org.gnome.desktop.interface cursor-theme "macOS"
+} && save_step
+
+step="[12|13]: Setting up look of your desktop"; log_step
 SELECTED_LOOK=$(zenity --list --radiolist \
   --title="Desktop Look" \
   --text="Choose the look of your desktop:" \
@@ -359,10 +368,10 @@ PROGRAMS=$(zenity --list --checklist \
   FALSE "rounded-corners" "Rounded Window Corners (GNOME Extension)" \
   FALSE "hidetopbar"      "Hide Top Bar (GNOME Extension)" \
   FALSE "vitals"          "Vitals - system monitor" \
-  FALSE "minecraft"       "Minecraft (FREE VERSION)" \
   FALSE "youtube-music"   "YouTube Music App" \
   FALSE "vicinae"         "Vicinae - launcher & clipboard manager" \
   FALSE "obs-hotkeys"     "Fix OBS recording hotkeys (you want this if you will record with obs)" \
+  FALSE "minecraft"       "Minecraft (FREE VERSION)" \
   --width=960 --height=540)
 
 selected() { echo "$PROGRAMS" | grep -qw "$1"; }
@@ -432,17 +441,13 @@ step="[13|13]: Installing selected programs"; log_step
   fi
 ) || echo "$(warn "Some extensions failed to enable. Try again")"
 
-if selected "minecraft"; then
-  eval "$MC_INSTALLER" || echo "$(warn "Minecraft installation failed. Try later by running this program again")"
-fi
-
 if selected "youtube-music"; then
   proceed_ytm_install=true
 
   is_ytm_exists=0
   rpm -qa | grep -q youtube-music && is_ytm_exists=1
 
-  [ $is_ytm_exists -eq 0 ] && {
+  [ $is_ytm_exists -eq 1 ] && {
     echo "$(warn "YouTube Music App is already installed")"
     ask_confirm "Do you want to reinstall?" || proceed_ytm_install=false
   }
@@ -465,6 +470,10 @@ fi
 
 if selected "obs-hotkeys"; then
   eval "$OBS_HOTKEYS_INSTALLER" || echo "$(warn "OBS Hotkeys installation failed. Try later by running this program again")"
+fi
+
+if selected "minecraft"; then
+  eval "$MC_INSTALLER" || echo "$(warn "Minecraft installation failed. Try later by running this program again")"
 fi
 
 zenity --info \
