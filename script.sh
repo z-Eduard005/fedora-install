@@ -297,7 +297,9 @@ run_the_step && {
   if grep -q ' . /etc/bashrc' "$HOME/.bashrc"; then
     sed -i 's| . /etc/bashrc|#. /etc/bashrc|' "$HOME/.bashrc"
   fi
-  [ "$SHELL" != "$(which zsh)" ] && chsh -s "$(which zsh)"
+  if [ "$SHELL" != "$(which zsh)" ]; then
+    chsh -s "$(which zsh)"
+  fi
 } && save_step
 
 step="[9|13]: Changing default music app"
@@ -307,7 +309,7 @@ run_the_step && {
 
 step="[10|13]: Tweaking system settings"
 run_the_step && {
-  powerprofilesctl set performance >/dev/null 2>&1
+  powerprofilesctl set performance >/dev/null 2>&1 || true
   gsettings set org.gnome.desktop.interface enable-hot-corners false
   gsettings set org.gnome.shell.app-switcher current-workspace-only true
   gsettings set org.gnome.mutter dynamic-workspaces false
@@ -330,7 +332,7 @@ run_the_step && {
   done
   sed -i "1s|^|file://$STEAMAPPS_DIR Steamapps\n|" "$BOOKMARKS_FILE"
   sed -i "1s|^|file://$WALLPAPERS_DIR Wallpapers\n|" "$BOOKMARKS_FILE"
-  nautilus -q >/dev/null 2>&1
+  nautilus -q >/dev/null 2>&1 || true
 } && save_step
 
 step="[11|13]: Installing essential gnome extensions"
@@ -340,7 +342,9 @@ run_the_step && {
 } && save_step
 
 step="Initialising steam"
-! is_step_done && steam -silent > /dev/null 2>&1 & disown && save_step
+! is_step_done && {
+  steam -silent > /dev/null 2>&1 & disown
+} && save_step
 
 step="Copying wallpapers and cursor files"
 ! is_step_done && {
@@ -432,7 +436,6 @@ step="[13|13]: Installing selected programs"; log_step
   if selected "hidetopbar"; then
     $EXT_CLI install hidetopbar@mathieu.bidon.ca
     $EXT_CLI update hidetopbar@mathieu.bidon.ca
-    $EXT_CLI enable hidetopbar@mathieu.bidon.ca
   fi
   if selected "vitals"; then
     $EXT_CLI install Vitals@CoreCoding.com
@@ -452,12 +455,12 @@ if selected "youtube-music"; then
     ask_confirm "Do you want to reinstall?" || proceed_ytm_install=false
   }
 
-  if $proceed_ytm_install; then
+    if [[ "$proceed_ytm_install" == true ]]; then
     ytm_release_url=$(echo "$YTM_DOWNLOAD_URL" | sed 's/api\.//; s/repos\///')
     echo "Installing YouTube Music App from \"$ytm_release_url\"..."
     (
       set -e
-      [ $is_ytm_exists -eq 0 ] && sudo dnf remove -y youtube-music
+      [ $is_ytm_exists -eq 1 ] && sudo dnf remove -y youtube-music
       curl -s "$YTM_DOWNLOAD_URL" | grep browser_download_url | grep x86_64.rpm | cut -d '"' -f 4 | xargs curl -L -o "$HOME/Downloads/youtube-music.rpm"
       sudo dnf install -y "$HOME/Downloads/youtube-music.rpm"
     ) || echo "$(warn "Error while installing Youtube Music App. Try again")"
